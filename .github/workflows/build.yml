@@ -1,0 +1,101 @@
+name: Build ImmortalWrt for Ruijie X60-PRO
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 25.12
+    paths:
+      - 'defconfig/**'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 720
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: 25.12
+          fetch-depth: 0
+          filter: 'blob:none'
+
+      - name: Install dependencies
+        run: |
+          sudo apt update -y
+          sudo apt full-upgrade -y
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm \
+            lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf \
+            python3 python3-pip python3-ply python3-docutils python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd \
+            sudo time aria2
+
+      - name: Apply defconfig
+        run: |
+          cp -f defconfig/mt7986-ax6000.config .config
+          make defconfig
+
+      - name: Update feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Download sources
+        run: |
+          make download -j$(nproc) V=s
+
+      - name: Build
+        run: |
+          make -j$(nproc) V=s
+
+      - name: Organize firmware
+        run: |
+          mkdir -p release
+          find bin/targets/ -type f \( -name "*.bin" -o -name "*.img" -o -name "*.itb" \) \
+            -exec cp -v {} release/ \;
+          find bin/targets/ -type f -name "sha256sums" -exec cp -v {} release/ \;
+          echo "## Firmware Info" >> release/README.md
+          echo "- **Target**: Ruijie RG-X60 Pro" >> release/README.md
+          echo "- **Source**: chasey-dev/immortalwrt-mt798x-rebase (25.12)" >> release/README.md
+          echo "- **Kernel**: 6.12" >> release/README.md
+          echo "- **WiFi Driver**: MTWiFi v7.6.7.3 (mtwifi-cfg-ucode)" >> release/README.md
+          echo "- **Build Date**: $(date -u +%Y-%m-%d)" >> release/README.md
+          ls -lh release/
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-ruijie-x60-pro
+          path: release/
+          retention-days: 30
+
+      - name: Create release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "x60-pro-{{ env.GITHUB_SHA_SHORT }}"
+          name: "ImmortalWrt for Ruijie X60-PRO (${{ github.event_name == 'workflow_dispatch' && 'Manual' || 'Auto' }} Build)"
+          body_path: release/README.md
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
